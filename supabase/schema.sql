@@ -93,6 +93,12 @@ create index if not exists generated_documents_submission_idx on public.generate
 create index if not exists notification_logs_submission_idx on public.notification_logs(submission_id);
 create index if not exists audit_logs_entity_idx on public.audit_logs(entity_type, entity_id);
 
+insert into storage.buckets (id, name, public)
+values ('generated-documents', 'generated-documents', false)
+on conflict (id) do update
+set name = excluded.name,
+    public = excluded.public;
+
 alter table public.intake_submissions enable row level security;
 alter table public.intake_answers enable row level security;
 alter table public.intake_files enable row level security;

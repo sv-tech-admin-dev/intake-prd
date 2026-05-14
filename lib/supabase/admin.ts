@@ -4,7 +4,7 @@ import { env } from "@/lib/env";
 import type { Database } from "@/lib/supabase/database.types";
 
 export function createSupabaseAdminClient() {
-  return createClient<Database>(env.supabaseUrl, env.supabaseServiceRoleKey, {
+  return createClient<Database>(env.supabaseUrl, env.supabaseSecretKey || env.supabaseServiceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

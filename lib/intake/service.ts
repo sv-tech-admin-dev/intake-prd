@@ -2,10 +2,11 @@ import { calculateReadiness, buildAnswerMap } from "./readiness";
 import { getVisibleQuestions } from "./logic";
 import type { IntakeSubmission, JsonValue, SubmissionAnswerRecord } from "./types";
 import { intakeSchema } from "./schema";
+import { env } from "@/lib/env";
 import {
   addSubmissionNote as addSubmissionNoteToRepository,
   createGeneratedDocument,
-  getDocumentById,
+  getDocumentDownloadById,
   getSnapshot,
   getSubmissionById,
   getSubmissionByToken,
@@ -13,6 +14,7 @@ import {
   saveSubmissionAnswers,
   submitSubmission,
 } from "./repository";
+import { buildGenerationContext, generateFallbackMarkdown } from "./generation";
 
 function answerMapFromSubmission(submission: IntakeSubmission) {
   return buildAnswerMap(submission.answers);
@@ -72,69 +74,60 @@ export async function submitIntake(submissionId: string) {
         ? "prd_with_assumptions"
         : "readiness_report";
 
-  const summary = buildSummary(saved, readiness);
-  const generated = await createGeneratedDocument({
-    submissionId: saved.id,
-    documentType,
-    markdown: summary,
-    modelName: "mock-openai-responses",
-    estimatedCostUsd: documentType === "prd" ? 0.42 : 0.18,
-  });
+  const generationContext = buildGenerationContext(saved);
 
-  await recordNotification({
-    submissionId: saved.id,
-    generatedDocumentId: generated.id,
-    channel: "email",
-    eventType: documentType === "readiness_report" ? "readiness_report_generated" : "prd_generated",
-    status: "sent",
-    message: `Internal delivery queued for ${saved.projectName || saved.id}.`,
-  });
+  if (env.supabaseUrl && (env.supabaseSecretKey || env.supabaseServiceRoleKey)) {
+    await createGeneratedDocument({
+      submissionId: saved.id,
+      documentType,
+    });
+  } else {
+    const generatedContent = generateFallbackMarkdown(generationContext);
+    const generated = await createGeneratedDocument({
+      submissionId: saved.id,
+      documentType,
+      markdown: generatedContent.markdown,
+      modelName: generatedContent.modelName,
+      estimatedCostUsd: generatedContent.estimatedCostUsd,
+    });
+
+    await recordNotification({
+      submissionId: saved.id,
+      generatedDocumentId: generated.id,
+      channel: "email",
+      eventType: documentType === "readiness_report" ? "readiness_report_generated" : "prd_generated",
+      status: "sent",
+      message: `Internal delivery queued for ${saved.projectName || saved.id}.`,
+    });
+  }
 
   return {
     submission: saved,
     readiness,
-    document: {
-      id: generated.id,
-      submissionId: generated.submissionId,
-      documentType: generated.documentType,
-      status: generated.status,
-      markdown: generated.markdown,
-      modelName: generated.modelName,
-      estimatedCostUsd: generated.estimatedCostUsd,
-      createdAt: generated.createdAt,
-    },
+    document: await getQueuedDocumentBySubmission(saved.id),
   };
 }
 
-function buildSummary(submission: IntakeSubmission, readiness: ReturnType<typeof calculateReadiness>) {
-  const answerMap = answerMapFromSubmission(submission);
-  const visibleQuestions = getVisibleQuestions(intakeSchema, answerMap);
+async function getQueuedDocumentBySubmission(submissionId: string) {
+  const snapshot = await getSnapshot();
+  const document = snapshot.documents
+    .filter((item) => item.submissionId === submissionId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 
-  const lines = [
-    "# Website Blueprint PRD",
-    "",
-    "## Summary",
-    `- Client: ${submission.clientName}`,
-    `- Project: ${submission.projectName}`,
-    `- Readiness score: ${readiness.score}`,
-    `- Outcome: ${readiness.outcome}`,
-    "",
-    "## Key Inputs",
-    ...visibleQuestions.map((question) => `- ${question.label}: ${String(answerMap[question.id] ?? "Not provided")}`),
-    "",
-    "## Missing Fields",
-    ...(readiness.missingFields.length > 0
-      ? readiness.missingFields.map((item) => `- ${item.label} (${item.severity})`)
-      : ["- None"]),
-    "",
-    "## Risk Flags",
-    ...(readiness.riskFlags.length > 0 ? readiness.riskFlags.map((flag) => `- ${flag}`) : ["- None"]),
-    "",
-    "## Review Notes",
-    "- Human review required before client handoff.",
-  ];
+  if (!document) {
+    throw new Error("Generated document not found");
+  }
 
-  return lines.join("\n");
+  return {
+    id: document.id,
+    submissionId: document.submissionId,
+    documentType: document.documentType,
+    status: document.status,
+    markdown: document.markdown,
+    modelName: document.modelName,
+    estimatedCostUsd: document.estimatedCostUsd,
+    createdAt: document.createdAt,
+  };
 }
 
 export async function getAdminDashboardData() {
@@ -184,7 +177,7 @@ export async function getSubmissionDetail(submissionId: string) {
 }
 
 export async function getDocumentDownload(documentId: string) {
-  const document = await getDocumentById(documentId);
+  const document = await getDocumentDownloadById(documentId);
   if (!document) return null;
   return document;
 }

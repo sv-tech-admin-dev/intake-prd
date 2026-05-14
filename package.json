@@ -11,7 +11,10 @@
     "db:config": "npx supabase config push",
     "db:reset": "npx supabase db reset",
     "db:types": "node scripts/generate-supabase-types.mjs",
-    "db:types:check": "node scripts/check-supabase-types.mjs"
+    "db:types:check": "node scripts/check-supabase-types.mjs",
+    "db:migrations:check": "node scripts/check-supabase-migrations.mjs",
+    "worker:generate": "tsx scripts/generation-worker.ts",
+    "worker:generate:once": "tsx scripts/generation-worker.ts --once"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
@@ -21,6 +24,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
     "next": "16.2.6",
+    "openai": "^6.37.0",
     "radix-ui": "^1.4.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -37,6 +41,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
+    "tsx": "^4.22.0",
     "typescript": "^5"
   }
 }

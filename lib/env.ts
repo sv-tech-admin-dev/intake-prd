@@ -5,6 +5,10 @@ const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(1).optional(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  OPENAI_MODEL: z.string().min(1).optional(),
+  SUPABASE_STORAGE_BUCKET: z.string().min(1).optional(),
+  SUPABASE_SECRET_KEY: z.string().min(1).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   DEMO_ADMIN_ACCESS: z.string().optional(),
@@ -24,6 +28,10 @@ export const env = {
   supabaseAnonKey: parsed.success
     ? parsed.data.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? parsed.data.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""
     : "",
+  openaiApiKey: parsed.success ? parsed.data.OPENAI_API_KEY ?? "" : "",
+  openaiModel: parsed.success ? parsed.data.OPENAI_MODEL ?? "gpt-5.2" : "gpt-5.2",
+  supabaseStorageBucket: parsed.success ? parsed.data.SUPABASE_STORAGE_BUCKET ?? "generated-documents" : "generated-documents",
+  supabaseSecretKey: parsed.success ? parsed.data.SUPABASE_SECRET_KEY ?? "" : "",
   supabaseServiceRoleKey: parsed.success ? parsed.data.SUPABASE_SERVICE_ROLE_KEY ?? "" : "",
   supabaseJwtSecret: parsed.success ? parsed.data.SUPABASE_JWT_SECRET ?? "" : "",
   demoAdminAccess: parsed.success ? parsed.data.DEMO_ADMIN_ACCESS === "true" || !hasSupabaseConfig : true,

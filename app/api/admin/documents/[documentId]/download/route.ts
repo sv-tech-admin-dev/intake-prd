@@ -18,6 +18,10 @@ export async function GET(request: Request, context: { params: Promise<{ documen
     return NextResponse.json({ error: "Document not found" }, { status: 404 });
   }
 
+  if (document.status !== "ready") {
+    return NextResponse.json({ error: "Document is not ready yet" }, { status: 409 });
+  }
+
   const filename = makeDocumentFilename("Northstar Studio", "Client intake blueprint", document.documentType, format);
 
   if (format === "md") {

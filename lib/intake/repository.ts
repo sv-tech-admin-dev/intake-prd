@@ -4,6 +4,11 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Json as SupabaseJson } from "@/lib/supabase/database.types";
 import { env } from "@/lib/env";
 import { isSupabaseConfigured } from "@/lib/auth";
+import {
+  buildGeneratedDocumentStorageKey,
+  downloadGeneratedDocumentStorageObject,
+  uploadGeneratedDocumentStorageObject,
+} from "@/lib/supabase/storage";
 import { getDocumentById as getDemoDocumentById, getSnapshot as getDemoSnapshot, getSubmissionById as getDemoSubmissionById, getSubmissionByToken as getDemoSubmissionByToken, listSubmissions as listDemoSubmissions, addSubmissionNote as addDemoSubmissionNote, appendAudit as appendDemoAudit, createGeneratedDocument as createDemoGeneratedDocument, recordNotification as recordDemoNotification, saveSubmissionAnswers as saveDemoSubmissionAnswers, submitSubmission as submitDemoSubmission } from "@/lib/intake/store";
 import type {
   AuditLogEntry,
@@ -47,6 +52,8 @@ type DocumentRow = {
   document_type: GeneratedDocument["documentType"];
   status: GeneratedDocument["status"];
   markdown_content: string;
+  markdown_storage_key: string | null;
+  pdf_storage_key: string | null;
   model_name: string | null;
   estimated_cost_usd: string | number;
   created_at: string;
@@ -118,10 +125,17 @@ function mapDocument(row: DocumentRow): GeneratedDocument {
     status: row.status,
     markdown: row.markdown_content,
     pdfBuffer: renderMarkdownToPdfBuffer("Website Blueprint PRD", row.markdown_content),
-    modelName: row.model_name ?? "openai",
+    modelName: row.model_name ?? "queued-generation",
     estimatedCostUsd: Number(row.estimated_cost_usd),
     createdAt: row.created_at,
   };
+}
+
+async function getDocumentRowById(documentId: string) {
+  const client = db();
+  const { data, error } = await client.from("generated_documents").select("*").eq("id", documentId).maybeSingle();
+  if (error) throw error;
+  return (data as DocumentRow | null) ?? null;
 }
 
 function mapNotification(row: NotificationRow): NotificationLog {
@@ -181,6 +195,85 @@ async function writeAudit(entry: Omit<AuditLogEntry, "id" | "createdAt">) {
   if (error) throw error;
 
   return mapAudit(data as AuditRow);
+}
+
+async function updateGeneratedDocumentRow(
+  documentId: string,
+  updates: Partial<
+    Pick<
+      DocumentRow,
+      "status" | "markdown_content" | "markdown_storage_key" | "pdf_storage_key" | "model_name" | "estimated_cost_usd"
+    >
+  >
+) {
+  if (!hasSupabaseRepositoryAccess()) {
+    const demoDocument = getDemoDocumentById(documentId);
+    if (!demoDocument) return null;
+
+    const nextDocument = {
+      ...demoDocument,
+      status: updates.status ?? demoDocument.status,
+      markdown: updates.markdown_content ?? demoDocument.markdown,
+      modelName: updates.model_name ?? demoDocument.modelName,
+      estimatedCostUsd: updates.estimated_cost_usd !== undefined ? Number(updates.estimated_cost_usd) : demoDocument.estimatedCostUsd,
+      pdfBuffer: renderMarkdownToPdfBuffer("Website Blueprint PRD", updates.markdown_content ?? demoDocument.markdown),
+    };
+
+    return nextDocument;
+  }
+
+  const client = db();
+  const payload: {
+    status?: DocumentRow["status"];
+    markdown_content?: DocumentRow["markdown_content"];
+    markdown_storage_key?: DocumentRow["markdown_storage_key"];
+    pdf_storage_key?: DocumentRow["pdf_storage_key"];
+    model_name?: DocumentRow["model_name"];
+    estimated_cost_usd?: number;
+  } = {};
+
+  if (updates.status !== undefined) payload.status = updates.status;
+  if (updates.markdown_content !== undefined) payload.markdown_content = updates.markdown_content;
+  if (updates.markdown_storage_key !== undefined) payload.markdown_storage_key = updates.markdown_storage_key;
+  if (updates.pdf_storage_key !== undefined) payload.pdf_storage_key = updates.pdf_storage_key;
+  if (updates.model_name !== undefined) payload.model_name = updates.model_name;
+  if (updates.estimated_cost_usd !== undefined) payload.estimated_cost_usd = Number(updates.estimated_cost_usd);
+
+  const { data, error } = await client
+    .from("generated_documents")
+    .update(payload)
+    .eq("id", documentId)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return mapDocument(data as DocumentRow);
+}
+
+async function loadDocumentMarkdown(document: DocumentRow) {
+  if (!document.markdown_storage_key) {
+    return document.markdown_content;
+  }
+
+  try {
+    const stored = await downloadGeneratedDocumentStorageObject(document.markdown_storage_key);
+    if (!stored) return document.markdown_content;
+    return new TextDecoder().decode(stored);
+  } catch {
+    return document.markdown_content;
+  }
+}
+
+async function loadDocumentPdf(document: DocumentRow, markdown: string) {
+  if (document.pdf_storage_key) {
+    try {
+      const stored = await downloadGeneratedDocumentStorageObject(document.pdf_storage_key);
+      if (stored) return stored;
+    } catch {
+      // Fall back to deterministic PDF rendering for older documents or missing storage objects.
+    }
+  }
+
+  return renderMarkdownToPdfBuffer("Website Blueprint PRD", markdown);
 }
 
 export async function getSubmissionByToken(token: string) {
@@ -387,12 +480,18 @@ export async function submitSubmission(submissionId: string, readinessScore: num
 export async function createGeneratedDocument(params: {
   submissionId: string;
   documentType: GeneratedDocument["documentType"];
-  markdown: string;
-  modelName: string;
-  estimatedCostUsd: number;
+  markdown?: string;
+  modelName?: string;
+  estimatedCostUsd?: number;
 }) {
   if (!hasSupabaseRepositoryAccess()) {
-    return createDemoGeneratedDocument(params);
+    return createDemoGeneratedDocument({
+      submissionId: params.submissionId,
+      documentType: params.documentType,
+      markdown: params.markdown ?? "",
+      modelName: params.modelName ?? "queued-generation",
+      estimatedCostUsd: params.estimatedCostUsd ?? 0,
+    });
   }
 
   const client = db();
@@ -401,17 +500,19 @@ export async function createGeneratedDocument(params: {
     .insert({
       submission_id: params.submissionId,
       document_type: params.documentType,
-      status: "ready",
-      markdown_content: params.markdown,
-      model_name: params.modelName,
-      estimated_cost_usd: params.estimatedCostUsd,
+      status: "queued",
+      markdown_content: params.markdown ?? "",
+      markdown_storage_key: null,
+      pdf_storage_key: null,
+      model_name: params.modelName ?? "queued-generation",
+      estimated_cost_usd: params.estimatedCostUsd ?? 0,
     })
     .select("*")
     .single();
   if (error) throw error;
 
   await writeAudit({
-    action: "prd_generation.completed",
+    action: "prd_generation.queued",
     entityType: "document",
     entityId: data.id,
     metadata: { submissionId: params.submissionId, documentType: params.documentType },
@@ -420,16 +521,141 @@ export async function createGeneratedDocument(params: {
   return mapDocument(data as DocumentRow);
 }
 
+export async function claimNextGeneratedDocument() {
+  if (!hasSupabaseRepositoryAccess()) {
+    const queuedDemoDocument = getDemoSnapshot().documents.find((document) => document.status === "queued");
+    return queuedDemoDocument ?? null;
+  }
+
+  const client = db();
+  const { data: queuedDocuments, error: queuedError } = await client
+    .from("generated_documents")
+    .select("*")
+    .eq("status", "queued")
+    .order("created_at", { ascending: true })
+    .limit(1);
+  if (queuedError) throw queuedError;
+
+  const nextDocument = queuedDocuments?.[0];
+  if (!nextDocument) {
+    return null;
+  }
+
+  const { data, error } = await client
+    .from("generated_documents")
+    .update({ status: "generating" })
+    .eq("id", nextDocument.id)
+    .eq("status", "queued")
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+
+  await writeAudit({
+    action: "prd_generation.claimed",
+    entityType: "document",
+    entityId: nextDocument.id,
+    metadata: { submissionId: nextDocument.submission_id, documentType: nextDocument.document_type },
+  });
+
+  return mapDocument(data as DocumentRow);
+}
+
+export async function updateGeneratedDocument(
+  documentId: string,
+  updates: Partial<
+    Pick<DocumentRow, "status" | "markdown_content" | "markdown_storage_key" | "pdf_storage_key" | "model_name" | "estimated_cost_usd">
+  >
+) {
+  return updateGeneratedDocumentRow(documentId, updates);
+}
+
+export async function persistGeneratedDocumentArtifacts(params: {
+  documentId: string;
+  markdown: string;
+  pdfBuffer: Uint8Array;
+  modelName: string;
+  estimatedCostUsd: number;
+}) {
+  if (!hasSupabaseRepositoryAccess()) {
+    const demoDocument = getDemoDocumentById(params.documentId);
+    if (!demoDocument) return null;
+
+    return {
+      ...demoDocument,
+      markdown: params.markdown,
+      pdfBuffer: params.pdfBuffer,
+      modelName: params.modelName,
+      estimatedCostUsd: params.estimatedCostUsd,
+      status: "ready" as const,
+    };
+  }
+
+  const document = await getDocumentRowById(params.documentId);
+  if (!document) {
+    throw new Error("Generated document not found");
+  }
+
+  const markdownStorageKey = buildGeneratedDocumentStorageKey(document.submission_id, document.id, "markdown");
+  const pdfStorageKey = buildGeneratedDocumentStorageKey(document.submission_id, document.id, "pdf");
+
+  await uploadGeneratedDocumentStorageObject(markdownStorageKey, params.markdown, "text/markdown; charset=utf-8");
+  await uploadGeneratedDocumentStorageObject(pdfStorageKey, params.pdfBuffer, "application/pdf");
+
+  return updateGeneratedDocumentRow(document.id, {
+    status: "ready",
+    markdown_content: params.markdown,
+    markdown_storage_key: markdownStorageKey,
+    pdf_storage_key: pdfStorageKey,
+    model_name: params.modelName,
+    estimated_cost_usd: params.estimatedCostUsd,
+  });
+}
+
+export async function markGeneratedDocumentFailed(documentId: string, message: string) {
+  if (!hasSupabaseRepositoryAccess()) {
+    const demoDocument = getDemoDocumentById(documentId);
+    if (!demoDocument) return null;
+    return {
+      ...demoDocument,
+      status: "failed",
+      markdown: demoDocument.markdown,
+    };
+  }
+
+  const updated = await updateGeneratedDocumentRow(documentId, { status: "failed" });
+  if (!updated) return null;
+
+  const client = db();
+  await client
+    .from("notification_logs")
+    .insert({
+      submission_id: updated.submissionId,
+      generated_document_id: documentId,
+      channel: "email",
+      event_type: "prd_generation_failed",
+      status: "failed",
+      message,
+    });
+
+  await writeAudit({
+    action: "prd_generation.failed",
+    entityType: "document",
+    entityId: documentId,
+    metadata: { message },
+  });
+
+  return updated;
+}
+
 export async function getDocumentById(documentId: string) {
   if (!hasSupabaseRepositoryAccess()) {
     return getDemoDocumentById(documentId) ?? null;
   }
 
-  const client = db();
-  const { data, error } = await client.from("generated_documents").select("*").eq("id", documentId).maybeSingle();
-  if (error) throw error;
-  if (!data) return null;
-  return mapDocument(data as DocumentRow);
+  const row = await getDocumentRowById(documentId);
+  if (!row) return null;
+  return mapDocument(row);
 }
 
 export async function listGeneratedDocuments() {
@@ -441,6 +667,24 @@ export async function listGeneratedDocuments() {
   const { data, error } = await client.from("generated_documents").select("*").order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []).map((row) => mapDocument(row as DocumentRow));
+}
+
+export async function getDocumentDownloadById(documentId: string) {
+  if (!hasSupabaseRepositoryAccess()) {
+    return getDemoDocumentById(documentId) ?? null;
+  }
+
+  const row = await getDocumentRowById(documentId);
+  if (!row) return null;
+
+  const markdown = await loadDocumentMarkdown(row);
+  const pdfBuffer = await loadDocumentPdf(row, markdown);
+
+  return {
+    ...mapDocument(row),
+    markdown,
+    pdfBuffer,
+  };
 }
 
 export async function listNotifications() {

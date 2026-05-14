@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { TestPrdGenerationButton } from "@/components/admin/test-prd-generation-button";
+import { DocumentRefreshPoller } from "@/components/admin/document-refresh-poller";
 import {
   Card,
   CardContent,
@@ -65,6 +66,8 @@ export default async function AdminSubmissionPage({ params }: { params: Promise<
   }
 
   const { submission, readiness, documents, notifications } = detail;
+  const readyDocument = documents.find((document) => document.status === "ready");
+  const hasPendingDocument = documents.some((document) => document.status === "queued" || document.status === "generating");
 
   return (
     <main className="min-h-screen bg-background px-4 py-6 text-foreground sm:px-6 lg:px-8">
@@ -91,6 +94,20 @@ export default async function AdminSubmissionPage({ params }: { params: Promise<
             </div>
           </CardHeader>
         </Card>
+
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3">
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              {hasPendingDocument ? "Generation is in progress" : "No generation jobs pending"}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {hasPendingDocument
+                ? "Queued documents will refresh here automatically once the worker marks them ready."
+                : "Trigger a PRD generation to see the worker queue and refresh behavior."}
+            </p>
+          </div>
+          <DocumentRefreshPoller active={hasPendingDocument} />
+        </div>
 
         <section className="mt-6 grid gap-4 md:grid-cols-4">
           <MetricCard title="Status" value={submission.status} />
@@ -120,9 +137,9 @@ export default async function AdminSubmissionPage({ params }: { params: Promise<
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="font-heading text-xl">Generated documents</CardTitle>
-                  {documents.length > 0 ? (
+                  {readyDocument ? (
                     <Button variant="outline" asChild>
-                      <Link href={`/api/admin/documents/${documents[0].id}/download?format=md`}>Download markdown</Link>
+                      <Link href={`/api/admin/documents/${readyDocument.id}/download?format=md`}>Download markdown</Link>
                     </Button>
                   ) : null}
                 </div>
@@ -130,7 +147,21 @@ export default async function AdminSubmissionPage({ params }: { params: Promise<
               <CardContent className="space-y-3">
                 {documents.map((document) => (
                   <div key={document.id} className="rounded-2xl border border-border bg-muted/40 p-4">
-                    <p className="font-medium">{document.documentType}</p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium">{document.documentType}</p>
+                      <DocumentStatusPill status={document.status} />
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {document.status === "queued"
+                        ? "Queued and waiting for the generation worker."
+                        : document.status === "generating"
+                          ? "Generation is actively running."
+                          : document.status === "ready"
+                            ? "Ready for download."
+                            : document.status === "failed"
+                              ? "Generation failed."
+                              : "Document approved."}
+                    </p>
                     <p className="mt-1 text-sm text-muted-foreground">Model: {document.modelName}</p>
                     <p className="mt-1 text-sm text-muted-foreground">Estimated cost: ${document.estimatedCostUsd.toFixed(2)}</p>
                   </div>
@@ -198,5 +229,33 @@ function InfoList({ title, items }: { title: string; items: string[] }) {
         {items.length > 0 ? items.map((item) => <p key={item}>- {item}</p>) : <p>- None</p>}
       </div>
     </div>
+  );
+}
+
+function DocumentStatusPill({ status }: { status: string }) {
+  const label =
+    status === "queued"
+      ? "Pending"
+      : status === "generating"
+        ? "Generating"
+        : status === "ready"
+          ? "Ready"
+          : status === "failed"
+            ? "Failed"
+            : "Approved";
+
+  const tone =
+    status === "queued" || status === "generating"
+      ? "border-amber-500/30 bg-amber-500/10 text-amber-700"
+      : status === "ready"
+        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+        : status === "failed"
+          ? "border-destructive/30 bg-destructive/10 text-destructive"
+          : "border-border bg-muted text-foreground";
+
+  return (
+    <span className={`rounded-full border px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] ${tone}`}>
+      {label}
+    </span>
   );
 }
