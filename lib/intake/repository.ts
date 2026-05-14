@@ -6,10 +6,24 @@ import { env } from "@/lib/env";
 import { isSupabaseConfigured } from "@/lib/auth";
 import {
   buildGeneratedDocumentStorageKey,
+  deleteGeneratedDocumentStorageObjects,
   downloadGeneratedDocumentStorageObject,
   uploadGeneratedDocumentStorageObject,
 } from "@/lib/supabase/storage";
-import { getDocumentById as getDemoDocumentById, getSnapshot as getDemoSnapshot, getSubmissionById as getDemoSubmissionById, getSubmissionByToken as getDemoSubmissionByToken, listSubmissions as listDemoSubmissions, addSubmissionNote as addDemoSubmissionNote, appendAudit as appendDemoAudit, createGeneratedDocument as createDemoGeneratedDocument, recordNotification as recordDemoNotification, saveSubmissionAnswers as saveDemoSubmissionAnswers, submitSubmission as submitDemoSubmission } from "@/lib/intake/store";
+import {
+  deleteDocumentById as deleteDemoDocumentById,
+  getDocumentById as getDemoDocumentById,
+  getSnapshot as getDemoSnapshot,
+  getSubmissionById as getDemoSubmissionById,
+  getSubmissionByToken as getDemoSubmissionByToken,
+  listSubmissions as listDemoSubmissions,
+  addSubmissionNote as addDemoSubmissionNote,
+  appendAudit as appendDemoAudit,
+  createGeneratedDocument as createDemoGeneratedDocument,
+  recordNotification as recordDemoNotification,
+  saveSubmissionAnswers as saveDemoSubmissionAnswers,
+  submitSubmission as submitDemoSubmission,
+} from "@/lib/intake/store";
 import type {
   AuditLogEntry,
   GeneratedDocument,
@@ -599,17 +613,51 @@ export async function persistGeneratedDocumentArtifacts(params: {
   const markdownStorageKey = buildGeneratedDocumentStorageKey(document.submission_id, document.id, "markdown");
   const pdfStorageKey = buildGeneratedDocumentStorageKey(document.submission_id, document.id, "pdf");
 
-  await uploadGeneratedDocumentStorageObject(markdownStorageKey, params.markdown, "text/markdown; charset=utf-8");
-  await uploadGeneratedDocumentStorageObject(pdfStorageKey, params.pdfBuffer, "application/pdf");
+  let storedMarkdownKey: string | null = markdownStorageKey;
+  let storedPdfKey: string | null = pdfStorageKey;
+
+  try {
+    await uploadGeneratedDocumentStorageObject(markdownStorageKey, params.markdown, "text/markdown; charset=utf-8");
+    await uploadGeneratedDocumentStorageObject(pdfStorageKey, params.pdfBuffer, "application/pdf");
+  } catch {
+    storedMarkdownKey = null;
+    storedPdfKey = null;
+  }
 
   return updateGeneratedDocumentRow(document.id, {
     status: "ready",
     markdown_content: params.markdown,
-    markdown_storage_key: markdownStorageKey,
-    pdf_storage_key: pdfStorageKey,
+    markdown_storage_key: storedMarkdownKey,
+    pdf_storage_key: storedPdfKey,
     model_name: params.modelName,
     estimated_cost_usd: params.estimatedCostUsd,
   });
+}
+
+export async function deleteGeneratedDocument(documentId: string) {
+  if (!hasSupabaseRepositoryAccess()) {
+    return deleteDemoDocumentById(documentId);
+  }
+
+  const document = await getDocumentRowById(documentId);
+  if (!document) return null;
+
+  await deleteGeneratedDocumentStorageObjects([document.markdown_storage_key, document.pdf_storage_key]);
+
+  const client = db();
+  const { error } = await client.from("generated_documents").delete().eq("id", documentId);
+  if (error) throw error;
+
+  await client.from("notification_logs").update({ generated_document_id: null }).eq("generated_document_id", documentId);
+
+  await writeAudit({
+    action: "prd_generation.deleted",
+    entityType: "document",
+    entityId: documentId,
+    metadata: { submissionId: document.submission_id, documentType: document.document_type },
+  });
+
+  return mapDocument(document);
 }
 
 export async function markGeneratedDocumentFailed(documentId: string, message: string) {

@@ -287,6 +287,26 @@ export function getDocumentById(documentId: string) {
   return getStore().documents.find((document) => document.id === documentId);
 }
 
+export function deleteDocumentById(documentId: string) {
+  const store = getStore();
+  const index = store.documents.findIndex((document) => document.id === documentId);
+  if (index === -1) return null;
+
+  const [removed] = store.documents.splice(index, 1);
+  store.notifications = store.notifications.filter((notification) => notification.generatedDocumentId !== documentId);
+  store.documentIndex.delete(documentId);
+  store.audit.push(
+    makeAuditEntry({
+      action: "prd_generation.deleted",
+      entityType: "document",
+      entityId: documentId,
+      metadata: { submissionId: removed.submissionId, documentType: removed.documentType },
+    })
+  );
+
+  return removed;
+}
+
 export function recordNotification(notification: Omit<NotificationLog, "id" | "createdAt">) {
   const store = getStore();
   const record: NotificationLog = {

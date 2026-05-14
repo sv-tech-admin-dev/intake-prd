@@ -1,6 +1,6 @@
 import { calculateReadiness, buildAnswerMap } from "./readiness";
 import { getVisibleQuestions } from "./logic";
-import type { IntakeSubmission, JsonValue, SubmissionAnswerRecord } from "./types";
+import type { GeneratedDocument, IntakeSubmission, JsonValue, SubmissionAnswerRecord } from "./types";
 import { intakeSchema } from "./schema";
 import { env } from "@/lib/env";
 import {
@@ -10,11 +10,13 @@ import {
   getSnapshot,
   getSubmissionById,
   getSubmissionByToken,
+  markGeneratedDocumentFailed,
   recordNotification,
   saveSubmissionAnswers,
   submitSubmission,
 } from "./repository";
 import { buildGenerationContext, generateFallbackMarkdown } from "./generation";
+import { processGeneratedDocument } from "./generation-runner";
 
 function answerMapFromSubmission(submission: IntakeSubmission) {
   return buildAnswerMap(submission.answers);
@@ -77,10 +79,28 @@ export async function submitIntake(submissionId: string) {
   const generationContext = buildGenerationContext(saved);
 
   if (env.supabaseUrl && (env.supabaseSecretKey || env.supabaseServiceRoleKey)) {
-    await createGeneratedDocument({
+    const queuedDocument = await createGeneratedDocument({
       submissionId: saved.id,
       documentType,
     });
+
+    try {
+      const readyDocument = await processGeneratedDocument({
+        document: queuedDocument,
+        submission: saved,
+      });
+
+      if (readyDocument) {
+        return {
+          submission: saved,
+          readiness,
+          document: readyDocument,
+        };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Generation failed during submission";
+      await markGeneratedDocumentFailed(queuedDocument.id, message);
+    }
   } else {
     const generatedContent = generateFallbackMarkdown(generationContext);
     const generated = await createGeneratedDocument({
@@ -176,10 +196,19 @@ export async function getSubmissionDetail(submissionId: string) {
   };
 }
 
-export async function getDocumentDownload(documentId: string) {
+export async function getDocumentDownload(documentId: string): Promise<
+  | (GeneratedDocument & { submission?: IntakeSubmission })
+  | null
+> {
   const document = await getDocumentDownloadById(documentId);
   if (!document) return null;
-  return document;
+  const submission = await getSubmissionById(document.submissionId);
+  if (!submission) return document;
+
+  return {
+    ...document,
+    submission,
+  };
 }
 
 export async function addSubmissionNote(submissionId: string, note: string) {

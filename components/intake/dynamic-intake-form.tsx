@@ -79,6 +79,7 @@ export function DynamicIntakeForm({ token, schema, submission }: Props) {
     setSaving(true);
     setError(null);
     setMessage(null);
+    setMessage("Submitting intake and generating the PRD...");
     try {
       const saveResponse = await fetch(`/api/intake/submissions/${submission.id}`, {
         method: "PATCH",
@@ -97,6 +98,7 @@ export function DynamicIntakeForm({ token, schema, submission }: Props) {
         throw new Error("Submission failed");
       }
 
+      setMessage("Submission received. Redirecting...");
       router.push(`/intake/${token}/submitted`);
       router.refresh();
     } catch (caught) {

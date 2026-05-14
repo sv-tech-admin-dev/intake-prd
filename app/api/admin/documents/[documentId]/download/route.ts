@@ -22,7 +22,15 @@ export async function GET(request: Request, context: { params: Promise<{ documen
     return NextResponse.json({ error: "Document is not ready yet" }, { status: 409 });
   }
 
-  const filename = makeDocumentFilename("Northstar Studio", "Client intake blueprint", document.documentType, format);
+  const clientName = document.submission?.clientName || "Client";
+  const projectName = document.submission?.projectName || "Website PRD";
+  const documentLabel =
+    document.documentType === "prd"
+      ? "PRD"
+      : document.documentType === "prd_with_assumptions"
+        ? "PRD with assumptions"
+        : "Readiness report";
+  const filename = makeDocumentFilename(clientName, projectName, documentLabel, format);
 
   if (format === "md") {
     return new NextResponse(document.markdown, {

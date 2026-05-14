@@ -1,6 +1,5 @@
-import { appendAudit, claimNextGeneratedDocument, getSubmissionById, markGeneratedDocumentFailed, persistGeneratedDocumentArtifacts, recordNotification } from "@/lib/intake/repository";
-import { buildGenerationContext, generatePrdMarkdown } from "@/lib/intake/generation";
-import { renderMarkdownToPdfBuffer } from "@/lib/pdf";
+import { claimNextGeneratedDocument, getSubmissionById, markGeneratedDocumentFailed } from "@/lib/intake/repository";
+import { processGeneratedDocument } from "@/lib/intake/generation-runner";
 
 const pollIntervalMs = Number(process.env.GENERATION_WORKER_POLL_MS ?? 5000);
 const runOnce = process.argv.includes("--once") || process.env.GENERATION_WORKER_ONCE === "true";
@@ -31,37 +30,10 @@ async function processOneQueuedDocument() {
     return true;
   }
 
-  const context = buildGenerationContext(submission);
-
   try {
-    const result = await generatePrdMarkdown(context);
-    const pdfBuffer = renderMarkdownToPdfBuffer("Website Blueprint PRD", result.markdown);
-    await persistGeneratedDocumentArtifacts({
-      documentId: document.id,
-      markdown: result.markdown,
-      pdfBuffer,
-      modelName: result.modelName,
-      estimatedCostUsd: result.estimatedCostUsd,
-    });
-
-    await appendAudit({
-      action: "prd_generation.completed",
-      entityType: "document",
-      entityId: document.id,
-      metadata: {
-        submissionId: submission.id,
-        modelName: result.modelName,
-        generationMode: result.generationMode,
-      },
-    });
-
-    await recordNotification({
-      submissionId: submission.id,
-      generatedDocumentId: document.id,
-      channel: "email",
-      eventType: document.documentType === "readiness_report" ? "readiness_report_generated" : "prd_generated",
-      status: "sent",
-      message: `Generated ${document.documentType} for ${submission.projectName || submission.id}.`,
+    await processGeneratedDocument({
+      document,
+      submission,
     });
 
     console.log(`Generated ${document.documentType} for submission ${submission.id}.`);

@@ -36,3 +36,12 @@ export async function downloadGeneratedDocumentStorageObject(storageKey: string)
   const arrayBuffer = await data.arrayBuffer();
   return new Uint8Array(arrayBuffer);
 }
+
+export async function deleteGeneratedDocumentStorageObjects(storageKeys: Array<string | null | undefined>) {
+  const keys = storageKeys.filter((key): key is string => Boolean(key));
+  if (keys.length === 0) return;
+
+  const client = createSupabaseAdminClient();
+  const { error } = await client.storage.from(getGeneratedDocumentsBucketName()).remove(keys);
+  if (error) throw error;
+}

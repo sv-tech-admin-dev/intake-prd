@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { DeleteDocumentButton } from "@/components/admin/delete-document-button";
 import { TestPrdGenerationButton } from "@/components/admin/test-prd-generation-button";
 import { DocumentRefreshPoller } from "@/components/admin/document-refresh-poller";
 import {
@@ -10,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { getCurrentUser, hasAdminAccess } from "@/lib/auth";
+import { makeDocumentFilename } from "@/lib/intake/filename";
 import { addSubmissionNote, getSubmissionDetail, submitIntake } from "@/lib/intake/service";
 import { revalidatePath } from "next/cache";
 
@@ -68,6 +70,11 @@ export default async function AdminSubmissionPage({ params }: { params: Promise<
   const { submission, readiness, documents, notifications } = detail;
   const readyDocument = documents.find((document) => document.status === "ready");
   const hasPendingDocument = documents.some((document) => document.status === "queued" || document.status === "generating");
+  const documentLabelByType = {
+    prd: "PRD",
+    prd_with_assumptions: "PRD with assumptions",
+    readiness_report: "Readiness report",
+  } as const;
 
   return (
     <main className="min-h-screen bg-background px-4 py-6 text-foreground sm:px-6 lg:px-8">
@@ -138,30 +145,55 @@ export default async function AdminSubmissionPage({ params }: { params: Promise<
                 <div className="flex items-center justify-between">
                   <CardTitle className="font-heading text-xl">Generated documents</CardTitle>
                   {readyDocument ? (
-                    <Button variant="outline" asChild>
-                      <Link href={`/api/admin/documents/${readyDocument.id}/download?format=md`}>Download markdown</Link>
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" asChild>
+                        <Link href={`/api/admin/documents/${readyDocument.id}/download?format=md`}>
+                          {makeDocumentFilename(
+                            submission.clientName || "Client",
+                            submission.projectName || "Website PRD",
+                            documentLabelByType[readyDocument.documentType],
+                            "md"
+                          )}
+                        </Link>
+                      </Button>
+                    </div>
                   ) : null}
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 {documents.map((document) => (
                   <div key={document.id} className="rounded-2xl border border-border bg-muted/40 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-medium">{document.documentType}</p>
-                      <DocumentStatusPill status={document.status} />
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium">{document.documentType}</p>
+                          <DocumentStatusPill status={document.status} />
+                        </div>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {document.status === "queued"
+                            ? "Queued and waiting for the generation worker."
+                            : document.status === "generating"
+                              ? "Generation is actively running."
+                              : document.status === "ready"
+                                ? "Ready for download."
+                              : document.status === "failed"
+                                ? "Generation failed."
+                                : "Document approved."}
+                        </p>
+                        <p className="mt-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                          Filename:
+                        </p>
+                        <p className="mt-1 font-mono text-sm text-foreground">
+                          {makeDocumentFilename(
+                            submission.clientName || "Client",
+                            submission.projectName || "Website PRD",
+                            documentLabelByType[document.documentType],
+                            "pdf"
+                          )}
+                        </p>
+                      </div>
+                      <DeleteDocumentButton documentId={document.id} documentLabel={document.documentType} />
                     </div>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {document.status === "queued"
-                        ? "Queued and waiting for the generation worker."
-                        : document.status === "generating"
-                          ? "Generation is actively running."
-                          : document.status === "ready"
-                            ? "Ready for download."
-                            : document.status === "failed"
-                              ? "Generation failed."
-                              : "Document approved."}
-                    </p>
                     <p className="mt-1 text-sm text-muted-foreground">Model: {document.modelName}</p>
                     <p className="mt-1 text-sm text-muted-foreground">Estimated cost: ${document.estimatedCostUsd.toFixed(2)}</p>
                   </div>

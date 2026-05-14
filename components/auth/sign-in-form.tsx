@@ -6,7 +6,15 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function SignInForm({ redirectTo }: { redirectTo: string }) {
+export function SignInForm({
+  redirectTo,
+  supabaseUrl,
+  supabaseAnonKey,
+}: {
+  redirectTo: string;
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+}) {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -16,10 +24,18 @@ export function SignInForm({ redirectTo }: { redirectTo: string }) {
     event.preventDefault();
     setError(null);
     setMessage(null);
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      setError(
+        "Supabase client configuration is missing. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY in .env.local."
+      );
+      return;
+    }
+
     setIsPending(true);
 
     try {
-      const supabase = createSupabaseBrowserClient();
+      const supabase = createSupabaseBrowserClient(supabaseUrl, supabaseAnonKey);
       const { error: signInError } = await supabase.auth.signInWithOtp({
         email,
         options: {

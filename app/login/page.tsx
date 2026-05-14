@@ -44,7 +44,11 @@ export default function LoginPage() {
           </Card>
 
           {isSupabaseConfigured() ? (
-            <SignInForm redirectTo={callbackUrl.toString()} />
+            <SignInForm
+              redirectTo={callbackUrl.toString()}
+              supabaseUrl={env.supabaseUrl}
+              supabaseAnonKey={env.supabaseAnonKey}
+            />
           ) : (
             <Card className="gap-0">
               <CardHeader>
