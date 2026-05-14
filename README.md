@@ -1,36 +1,80 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Intake PRD
 
-## Getting Started
+Dynamic website intake and PRD generation workspace built on Next.js App Router.
 
-First, run the development server:
+## What is in this repo
+
+- Schema-driven public intake flow at `/intake/[token]`
+- Admin review surface at `/admin/intake`
+- Mocked generation and export routes for PRD and readiness artifacts
+- Shared intake schema, logic engine, readiness scoring, and in-memory demo store
+- Supabase-based database and authentication integration
+
+## Local development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `http://localhost:3000` for the landing page
+- `http://localhost:3000/intake/demo-token` for the demo intake flow
+- `http://localhost:3000/admin/intake` for the admin review screen
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Supabase
 
-## Learn More
+The database schema and local Supabase config live under `supabase/`.
 
-To learn more about Next.js, take a look at the following resources:
+One-time setup for a remote project:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npx supabase link --project-ref YOUR_PROJECT_REF
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Push local migrations to Supabase:
 
-## Deploy on Vercel
+```bash
+npm run db:push
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Reset the local Supabase database and replay migrations:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run db:reset
+```
+
+Push local config changes such as auth redirect URLs:
+
+```bash
+npm run db:config
+```
+
+Regenerate the TypeScript database types from the linked Supabase project:
+
+```bash
+npm run db:types
+```
+
+Check that the committed types still match the linked project:
+
+```bash
+npm run db:types:check
+```
+
+In CI, set `SUPABASE_PROJECT_REF` to the target project ref so the type check can query that project directly.
+
+## Checks
+
+```bash
+npm run lint
+npm run build
+```
+
+## Notes
+
+- The app keeps a local in-memory demo fallback when Supabase env vars are not set.
+- Supabase is the chosen path for both database and authentication.
+- Use `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` for the client auth setup.
+- The same route shape works with either Supabase-backed persistence or demo mode.

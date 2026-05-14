@@ -1,0 +1,13 @@
+project_id = "intake-prd"
+
+[api]
+enabled = true
+schemas = ["public", "storage", "graphql_public"]
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/auth/callback"]
+
+[db]
+major_version = 15
